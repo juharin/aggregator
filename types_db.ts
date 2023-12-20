@@ -18,8 +18,6 @@ export interface Database {
           payment_method: Json | null;
           full_name: string | null;
           avatar_url: string | null;
-          polar_access_token: string | null;
-          polar_expires_in: Date | null;
         };
         Insert: {
           id: string;
@@ -29,8 +27,6 @@ export interface Database {
           payment_method?: Json | null;
           full_name?: string | null;
           avatar_url?: string | null;
-          polar_access_token?: string | null;
-          polar_expires_in?: Date | null;
         };
         Update: {
           id?: string;
@@ -40,8 +36,6 @@ export interface Database {
           payment_method?: Json | null;
           full_name?: string | null;
           avatar_url?: string | null;
-          polar_access_token?: string | null;
-          polar_expires_in?: Date | null;
         };
       };
       customers: {
