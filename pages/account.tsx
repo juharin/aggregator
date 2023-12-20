@@ -1,13 +1,17 @@
 import Link from 'next/link';
-import { useState, ReactNode } from 'react';
+import { useState, useEffect, ReactNode } from 'react';
 
 import LoadingDots from 'components/ui/LoadingDots';
 import Button from 'components/ui/Button';
 import { useUser } from 'utils/useUser';
 import { postData } from 'utils/helpers';
-
+import { updatePolarAccessToken, updatePolarTokenExpiresIn } from '@/utils/supabase-client';
 import { User } from '@supabase/supabase-js';
-import { withPageAuth } from '@supabase/auth-helpers-nextjs';
+//import { withPageAuth } from '@supabase/auth-helpers-nextjs';
+import { createServerSupabaseClient } from '@supabase/auth-helpers-nextjs'
+//import { GetServerSidePropsContext } from 'next'
+//import supabase from 'utils/supabase-browser';
+//import createClient from 'utils/supabase-server';
 
 interface Props {
   title: string;
@@ -31,11 +35,184 @@ function Card({ title, description, footer, children }: Props) {
   );
 }
 
-export const getServerSideProps = withPageAuth({ redirectTo: '/signin' });
+//export const getServerSideProps = withPageAuth({ redirectTo: '/signin' });
 
-export default function Account({ user }: { user: User }) {
+export async function getServerSideProps(/*{ req, res, query }*/ctx) {
+
+  const serverSupabaseClient = createServerSupabaseClient(ctx);
+  //const { req, res, query } = ctx;
+  // Create authenticated Supabase Client
+  //const supabase = createPagesServerClient(ctx);
+  // Check if we have a session
+  const {
+    data: { session },
+  } = await serverSupabaseClient.auth.getSession();
+
+  if (!session) {
+    return {
+      redirect: {
+        destination: '/',
+        permanent: false,
+      },
+    }
+  }
+
+  const { data: userData, error } = await serverSupabaseClient
+    .from('users')
+    .select('*')
+    .eq('id', session.user.id);
+  
+  if (error) {
+    console.log(error.message);
+  }
+  
+    // extract authorization code 'code' from request params and get access token
+  //const authCode = req.headers.searchParams["code"];
+  const authCode = ctx.query ? ctx.query.code : null;
+  const storedAccessToken = userData?.at(0).polar_access_token || null;
+  console.log('Users stored Polar access token: %s', storedAccessToken);
+  let data = {};
+
+  // get access token
+  if (authCode && !storedAccessToken) {
+    console.log('Polar authorized (%s), getting access token', authCode);
+    let authCredentials = new Buffer("1da146c8-b5a5-4b75-8f90-ce77efd5a120:ae1e9c36-11fa-42d2-ba15-0c763044e643");
+    let base64Data = authCredentials.toString('base64');
+    const requestBody = {
+      "grant_type": "authorization_code",
+      "code": authCode,
+    };
+    const authResponse = await fetch(`https://polarremote.com/v2/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "Authorization": "Basic " + base64Data,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json;charset=UTF-8"
+      },
+      body: new URLSearchParams(requestBody),
+    });
+    data = await authResponse.json();
+  }
+
+  let polarUserData = {};
+  if (data.access_token && !storedAccessToken) {
+    console.log('Got access token (%s), registering user', data.access_token);
+    /*const registerResponse = await fetch(`https://www.polaraccesslink.com/v3/users`, {
+      method: "POST",
+      mode: "no-cors", // no-cors, *cors, same-origin
+      headers: {
+        "Authorization": "Bearer " + data.access_token,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: {
+        "member-id": "aggre_" + data.x_user_id,
+      },
+    });
+    polarUserData = await registerResponse.json();*/
+    const requestBody = {
+      "member-id": "aggre_" + data.x_user_id,
+    };
+    fetch(`https://www.polaraccesslink.com/v3/users`, {
+        method: "POST",
+        mode: "no-cors", // no-cors, *cors, same-origin
+        headers: new Headers({
+          "Authorization": "Bearer " + data.access_token,
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        }),
+        body: JSON.stringify(requestBody),
+      }
+    ).then(function(registerResponse) {
+      console.log('Registering returned %d', registerResponse.status);
+      if (registerResponse.ok) {
+        polarUserData = registerResponse.json();
+      }
+    }).then(function(body) {
+      console.log(body);
+    });
+  }
+
+  // Pass data to the page via props
+  return { 
+    props: { 
+      initialSession: session,
+      user: session.user, 
+      data,
+      polarUserData,
+      storedAccessToken,
+    } 
+  }
+}
+
+export default function Account(
+  { user, data, polarUserData, storedAccessToken }: 
+  { user: User, data: {}, polarUserData: {}, storedAccessToken: string }
+) {
   const [loading, setLoading] = useState(false);
+  const [polarConnected, setPolarConnected] = useState(false);
   const { isLoading, subscription, userDetails } = useUser();
+  
+  useEffect(() => {
+    if (!polarConnected) {
+      console.log('Checking users Polar access token (%s), setting state', storedAccessToken);
+      setPolarConnected(storedAccessToken ? true : false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (data.access_token && !polarConnected) {
+      console.log('Got Polar authorization data (%s), storing to DB', data.access_token);
+      setPolarConnected(data.access_token ? true : false);
+      // TODO: Should handle these in the server?
+      const { 
+        access_token: accessToken = null, 
+        expires_in: expiresIn = null, 
+        x_user_id: polarId = null 
+      } = data;
+      // TODO: Should do this in the server?
+      const polarExpiresIn = new Date((((new Date()).getTime() / 1000) + expiresIn) * 1000);
+      //const userBefore = await getUser(session.user);
+      if (accessToken) {
+        updatePolarAccessToken(user, accessToken)
+        .then(function(userData) {
+          const userWithToken = userData;
+        }).then(function(body) {
+          console.log(body);
+        });
+      }
+      if (polarExpiresIn) {
+        updatePolarTokenExpiresIn(user, polarExpiresIn)
+        .then(function(userData) {
+          const userWithExpiration = userData;
+        }).then(function(body) {
+          console.log(body);
+        });
+      }
+    }
+  }, [data]);
+  
+  let getUserData = {};
+
+  useEffect(() => {
+    if (polarConnected && storedAccessToken) {
+      console.log('Polar connected (%s), getting Polar user data for %d', storedAccessToken, data.x_user_id);
+      fetch(`https://www.polaraccesslink.com/v3/users/29619815`, //${data.x_user_id}`,
+      {
+        method: 'GET',
+        mode: "no-cors", // no-cors, *cors, same-origin
+        headers: new Headers({
+          "Authorization": "Bearer " + storedAccessToken,
+          "Accept": "application/json",
+        })
+      })
+      .then(function(res) {
+        getUserData = res.json();
+      }).then(function(body) {
+        console.log(body);
+      });
+    };
+  }, [polarConnected]);
 
   const redirectToCustomerPortal = async () => {
     setLoading(true);
@@ -106,6 +283,38 @@ export default function Account({ user }: { user: User }) {
                 <a>Choose your plan</a>
               </Link>
             )}
+          </div>
+        </Card>
+        <Card
+          title="Your Connected Services"
+          description="Activity and training data services you can connect to."
+          footer={<p>Please connect all of your data sources.</p>}
+        >
+          <div className="text-xl mt-8 mb-4 font-semibold">
+            {isLoading ? (
+              <div className="h-12 mb-6">
+                <LoadingDots />
+              </div>
+            ) : polarConnected ? (
+              <>
+                <p>Polar connected</p>
+                <Link href="/">
+                  <a>Disconnect Polar</a>
+                </Link>
+              </>
+            ) : (
+              <Link href="https://flow.polar.com/oauth2/authorization?response_type=code&client_id=1da146c8-b5a5-4b75-8f90-ce77efd5a120">
+                <a>Connect Polar</a>
+              </Link>
+            )}
+            <p>Polar user data</p>
+            {data.x_user_id}
+            <p>First name from polarUserData</p>
+            {polarUserData["first-name"]}
+            {polarUserData["member-id"]}
+            <p>First name from getUserData</p>
+            {getUserData["first-name"]}
+            {getUserData.height}
           </div>
         </Card>
         <Card
