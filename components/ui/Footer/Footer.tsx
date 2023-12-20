@@ -99,6 +99,25 @@ export default function Footer() {
           </a>
         </div>
       </div>
+      <div>
+        <h4 className="text-center md:text-left text-lg mt-5 md:pl-8">
+          A statically generated blog example using{' '}
+          <a
+            href="https://entertainment-web-two.vercel.app/homePage"
+            className="underline hover:text-success duration-200 transition-colors"
+          >
+            HomePage
+          </a>{' '}
+          and{' '}
+          <a
+            href="https://entertainment-web-two.vercel.app/loginPage"
+            className="underline hover:text-success duration-200 transition-colors"
+          >
+            LoginPage
+          </a>
+          .
+        </h4>
+      </div>
     </footer>
   );
 }
